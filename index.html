@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>React To‑Do — Spinner + Pomodoro + Settings Menu</title>
+
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React 18 + ReactDOM (UMD) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Babel for on-the-fly JSX transform (dev only) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+      ::-webkit-scrollbar { height: 8px; width: 8px; }
+      ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+    </style>
+  </head>
+  <body class="bg-gray-50 text-gray-900 min-h-screen transition-colors">
+    <div id="root" class="max-w-3xl mx-auto p-6"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+
+      // Local Storage Keys
+      const STORAGE_KEY = "todo.v1";
+      const THEME_KEY = "todo.theme";
+      const SEARCH_KEY = "todo.showSearch";
+      const ADD_KEY = "todo.showAdd";
+      const POMO_FS_KEY = "todo.pomoAutoFs";
+      const POMO_COVER_KEY = "todo.pomoAutoCover";
+      const PALETTE_KEY = "todo.palette";
+      const AUTO_COMPLETE_KEY = "todo.autoComplete";
+
+      // Helpers for local storage
+      const loadTasks = () => {
+        try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+      };
+      const saveTasks = (tasks) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {} };
+      const loadTheme = () => localStorage.getItem(THEME_KEY) || "light";
+      const saveTheme = (t) => { try { localStorage.setItem(THEME_KEY, t); } catch {} };
+      const loadBool = (k, dflt=true) => {
+        try { const v = localStorage.getItem(k); if (v===null) return dflt; return v==="true"||v==="1"; } catch { return dflt; }
+      };
+      const saveBool = (k, b) => { try { localStorage.setItem(k, String(!!b)); } catch {} };
+
+      const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+      const FILTERS = { all:()=>true, active:(t)=>!t.completed, completed:(t)=>t.completed };
+
+      // Palettes (explicit classes so Tailwind JIT includes them)
+      const PALETTES = {
+        orange: { name:"Orange", panelBg:"bg-orange-50", panelBorder:"border-orange-200", coverBg:"bg-orange-100", chipText:"text-orange-800", chipBorder:"border-orange-200", bigText:"text-orange-900", tipText:"text-orange-700", kbdBorder:"border-orange-300", btnPrimaryBg:"bg-orange-600", btnPrimaryHover:"hover:bg-orange-700", btnOutlineBorder:"border-orange-300" },
+        blue:   { name:"Blue", panelBg:"bg-blue-50", panelBorder:"border-blue-200", coverBg:"bg-blue-100", chipText:"text-blue-800", chipBorder:"border-blue-200", bigText:"text-blue-900", tipText:"text-blue-700", kbdBorder:"border-blue-300", btnPrimaryBg:"bg-blue-600", btnPrimaryHover:"hover:bg-blue-700", btnOutlineBorder:"border-blue-300" },
+        emerald:{ name:"Emerald", panelBg:"bg-emerald-50", panelBorder:"border-emerald-200", coverBg:"bg-emerald-100", chipText:"text-emerald-800", chipBorder:"border-emerald-200", bigText:"text-emerald-900", tipText:"text-emerald-700", kbdBorder:"border-emerald-300", btnPrimaryBg:"bg-emerald-600", btnPrimaryHover:"hover:bg-emerald-700", btnOutlineBorder:"border-emerald-300" },
+        purple: { name:"Purple", panelBg:"bg-purple-50", panelBorder:"border-purple-200", coverBg:"bg-purple-100", chipText:"text-purple-800", chipBorder:"border-purple-200", bigText:"text-purple-900", tipText:"text-purple-700", kbdBorder:"border-purple-300", btnPrimaryBg:"bg-purple-600", btnPrimaryHover:"hover:bg-purple-700", btnOutlineBorder:"border-purple-300" },
+        rose:   { name:"Rose", panelBg:"bg-rose-50", panelBorder:"border-rose-200", coverBg:"bg-rose-100", chipText:"text-rose-800", chipBorder:"border-rose-200", bigText:"text-rose-900", tipText:"text-rose-700", kbdBorder:"border-rose-300", btnPrimaryBg:"bg-rose-600", btnPrimaryHover:"hover:bg-rose-700", btnOutlineBorder:"border-rose-300" },
+      };
+
+      function SettingsMenu({ open, setOpen, settings }) {
+        const wrapRef = useRef(null);
+        useEffect(() => {
+          if (!open) return;
+          const onClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+          const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+          window.addEventListener('mousedown', onClick);
+          window.addEventListener('keydown', onEsc);
+          return () => { window.removeEventListener('mousedown', onClick); window.removeEventListener('keydown', onEsc); };
+        }, [open, setOpen]);
+
+        const P = PALETTES[settings.palette] || PALETTES.orange;
+
+        return open ? (
+          <div ref={wrapRef} className={`absolute right-0 top-full mt-2 w-80 rounded-xl border bg-white shadow-xl ${P.panelBorder}`}>
+            <div className="p-3 text-xs text-gray-500">Settings</div>
+            <div className="px-3 pb-3 space-y-3 text-sm">
+              <div className="grid grid-cols-1 gap-2">
+                <label className="inline-flex items-center justify-between gap-3">
+                  <span>Show search bar</span>
+                  <input type="checkbox" checked={settings.showSearch} onChange={(e)=>settings.setShowSearch(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                </label>
+                <label className="inline-flex items-center justify-between gap-3">
+                  <span>Show add bar</span>
+                  <input type="checkbox" checked={settings.showAdd} onChange={(e)=>settings.setShowAdd(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                </label>
+                <label className="inline-flex items-center justify-between gap-3">
+                  <span>Dark theme</span>
+                  <input type="checkbox" checked={settings.theme === 'dark'} onChange={()=>settings.toggleTheme()} className="h-4 w-4 rounded border-gray-300" />
+                </label>
+                <label className="inline-flex items-center justify-between gap-3">
+                  <span>Palette</span>
+                  <select value={settings.palette} onChange={(e)=>settings.setPalette(e.target.value)} className="rounded-md border border-gray-200 bg-white px-2 py-1">
+                    {Object.entries(PALETTES).map(([k,p])=> (<option key={k} value={k}>{p.name}</option>))}
+                  </select>
+                </label>
+              </div>
+              <div className="border-t pt-3">
+                <div className="text-xs text-gray-500 mb-2">Pomodoro</div>
+                <div className="grid grid-cols-1 gap-2">
+                  <label className="inline-flex items-center justify-between gap-3">
+                    <span>Auto fullscreen on Start</span>
+                    <input type="checkbox" checked={settings.autoFs} onChange={(e)=>settings.setAutoFs(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                  </label>
+                  <label className="inline-flex items-center justify-between gap-3">
+                    <span>Auto cover window on Start</span>
+                    <input type="checkbox" checked={settings.autoCover} onChange={(e)=>settings.setAutoCover(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                  </label>
+                </div>
+              </div>
+              <div className="border-t pt-3">
+                <div className="text-xs text-gray-500 mb-2">Tasks</div>
+                <label className="inline-flex items-center justify-between gap-3">
+                  <span>Auto‑complete selected after focus</span>
+                  <input type="checkbox" checked={settings.autoComplete} onChange={(e)=>settings.setAutoComplete(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                </label>
+              </div>
+              <div className="flex justify-end pt-2">
+                <button onClick={()=>setOpen(false)} className={`px-3 py-1.5 rounded-lg border bg-white text-sm ${P.btnOutlineBorder}`}>Close</button>
+              </div>
+            </div>
+          </div>
+        ) : null;
+      }
+
+      function TopBar({ remaining, total, filter, setFilter, query, setQuery, theme, toggleTheme, clearCompleted, toggleAll, onSpin, spinning, showSearch, setShowSearch, showAdd, setShowAdd, palette, setPalette, settingsState }) {
+        const [open, setOpen] = useState(false);
+        return (
+          <div className="relative">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">To-do</h1>
+                <p className="text-sm text-gray-500">{remaining} of {total} remaining</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {Object.keys(FILTERS).map((name) => (
+                  <button key={name} onClick={() => setFilter(name)} className={`px-3 py-1.5 rounded-full text-sm border transition ${filter === name? "bg-gray-900 text-white border-gray-900":"bg-white text-gray-700 border-gray-200 hover:bg-gray-100"}`} aria-pressed={filter === name}>
+                    {name[0].toUpperCase() + name.slice(1)}
+                  </button>
+                ))}
+
+                {showSearch && (
+                  <div className="relative">
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" className="w-44 sm:w-52 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                )}
+
+                <button onClick={onSpin} disabled={spinning} className={`px-3 py-1.5 rounded-full text-sm border ${spinning?"border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed":"border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"}`} title="Spin to pick a task" aria-busy={spinning}>
+                  {spinning ? "Spinning…" : "Spin 🎯"}
+                </button>
+
+                {/* Single Settings menu trigger */}
+                <button onClick={()=>setOpen(v=>!v)} className="px-3 py-1.5 rounded-full text-sm border border-gray-200 bg-white hover:bg-gray-100" title="Open settings">⚙️ Settings</button>
+              </div>
+            </div>
+
+            <SettingsMenu
+              open={open}
+              setOpen={setOpen}
+              settings={{
+                showSearch, setShowSearch,
+                showAdd, setShowAdd,
+                theme, toggleTheme,
+                palette, setPalette,
+                autoFs: settingsState.autoFs, setAutoFs: settingsState.setAutoFs,
+                autoCover: settingsState.autoCover, setAutoCover: settingsState.setAutoCover,
+                autoComplete: settingsState.autoComplete, setAutoComplete: settingsState.setAutoComplete,
+              }}
+            />
+          </div>
+        );
+      }
+
+      function AddForm({ onAdd }) {
+        const [text, setText] = useState("");
+        const inputRef = useRef(null);
+        const submit = () => { const title = text.trim(); if (!title) return; onAdd(title); setText(""); inputRef.current?.focus(); };
+        return (
+          <div className="mt-2">
+            <label htmlFor="newTask" className="sr-only">Add a task</label>
+            <div className="flex gap-2">
+              <input id="newTask" ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e)=>{ if(e.key==="Enter") submit(); }} placeholder="What needs to be done?" className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+              <button onClick={submit} className="rounded-xl px-4 py-3 text-base font-medium bg-gray-900 text-white shadow-sm hover:bg-black">Add</button>
+            </div>
+          </div>
+        );
+      }
+
+      function TaskItem({ task, onToggle, onDelete, onSaveTitle, onMoveUp, onMoveDown, highlighted, selected }) {
+        const [editing, setEditing] = useState(false);
+        const [draft, setDraft] = useState(task.title);
+        const inputRef = useRef(null);
+        useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+        const save = () => { const t = draft.trim(); if (!t) return setDraft(task.title), setEditing(false); onSaveTitle(task.id, t); setEditing(false); };
+        return (
+          <li className={`group flex items-center gap-3 rounded-xl border p-3 shadow-sm transition ${selected ? "border-green-400 ring-2 ring-green-200" : highlighted ? "border-indigo-300 ring-1 ring-indigo-200" : "border-gray-200"} ${highlighted ? "bg-indigo-50" : "bg-white"}`}>
+            <input id={`cb-${task.id}`} type="checkbox" checked={task.completed} onChange={() => onToggle(task.id)} className="h-5 w-5 rounded border-gray-300" />
+            <label htmlFor={`cb-${task.id}`} className="sr-only">Toggle complete</label>
+            <div className="flex-1">
+              {editing ? (
+                <input ref={inputRef} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }} onBlur={save} className="w-full rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-300" />
+              ) : (
+                <p className={`text-base ${task.completed ? "line-through text-gray-400" : "text-gray-800"}`}>{task.title}</p>
+              )}
+              <p className="text-xs text-gray-400">Added {new Date(task.createdAt).toLocaleString()}</p>
+            </div>
+            <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
+              <button onClick={() => setEditing((v) => !v)} className="px-2 py-1 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-100" title={editing ? "Save" : "Edit"}>{editing ? "Save" : "Edit"}</button>
+              <button onClick={() => onMoveUp(task.id)} className="px-2 py-1 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-100" title="Move up" aria-label="Move up">↑</button>
+              <button onClick={() => onMoveDown(task.id)} className="px-2 py-1 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-100" title="Move down" aria-label="Move down">↓</button>
+              <button onClick={() => onDelete(task.id)} className="px-2 py-1 text-sm rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50" title="Delete">Delete</button>
+            </div>
+          </li>
+        );
+      }
+
+      function EmptyState() { return <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-500">No tasks yet. Add your first one above!</div>; }
+
+      function PomodoroTimer({ selectedTitle, onDone, paletteKey, autoFs, autoCover }) {
+        const [focusMin, setFocusMin] = useState(25);
+        const [breakMin, setBreakMin] = useState(5);
+        const [mode, setMode] = useState("focus");
+        const [seconds, setSeconds] = useState(25*60);
+        const [running, setRunning] = useState(false);
+        const [fullscreen, setFullscreen] = useState(false);
+        const [cover, setCover] = useState(false);
+        const containerRef = useRef(null);
+        const tickRef = useRef(null);
+        const P = PALETTES[paletteKey] || PALETTES.orange;
+
+        // sync seconds with durations/mode
+        useEffect(()=>{ setSeconds((mode==="focus"?focusMin:breakMin)*60); },[focusMin,breakMin,mode]);
+
+        // timer loop
+        useEffect(()=>{
+          if(!running) return;
+          tickRef.current = setInterval(()=>{
+            setSeconds(s=>{
+              if(s<=1){ clearInterval(tickRef.current); setRunning(false); if(mode==="focus"){ onDone&&onDone(); setMode("break"); } else setMode("focus"); return 0; }
+              return s-1;
+            });
+          },1000);
+          return ()=> clearInterval(tickRef.current);
+        },[running,mode]);
+
+        // fullscreen helpers
+        const toggleFullscreen = async () => { try { if (!document.fullscreenElement) { await containerRef.current?.requestFullscreen(); } else { await document.exitFullscreen(); } } catch(e){} };
+        useEffect(()=>{ const onChange=()=>setFullscreen(!!document.fullscreenElement); document.addEventListener('fullscreenchange', onChange); return ()=> document.removeEventListener('fullscreenchange', onChange); },[]);
+
+        // keyboard shortcuts
+        //useEffect(()=>{ const onKey=(e)=>{ const k=e.key?.toLowerCase(); if(k==='f') { e.preventDefault(); toggleFullscreen(); } if(k==='c'){ e.preventDefault(); setCover(v=>!v); } }; document.addEventListener('keydown', onKey); return ()=> document.removeEventListener('keydown', onKey); },[]);
+
+        const start = ()=>{ if (autoFs && !document.fullscreenElement) toggleFullscreen(); if (autoCover) setCover(true); setRunning(true); };
+        const pause = ()=> setRunning(false);
+        const reset = ()=>{ setRunning(false); setSeconds((mode==="focus"?focusMin:breakMin)*60); };
+
+        const mm = String(Math.floor(seconds/60)).padStart(2,"0");
+        const ss = String(seconds%60).padStart(2,"0");
+
+        return (
+          <div ref={containerRef} className={`rounded-xl border p-4 ${P.panelBorder} ${P.panelBg} ${fullscreen||cover?`fixed inset-0 z-50 flex flex-col justify-center items-center ${P.coverBg}`:""}`}>
+            <div className="flex items-center justify-between w-full max-w-2xl">
+              <div className={`text-sm font-medium ${P.chipText}`}>⏱ Flow <span className={`ml-2 px-2 py-0.5 rounded-full bg-white ${P.chipBorder} border text-xs uppercase tracking-wide`}>{mode}</span></div>
+              <div className={`text-xs truncate max-w-[60%] ${P.tipText}`}>{selectedTitle ? <>Working on: <strong>{selectedTitle}</strong></> : <span className="italic opacity-80">No task selected</span>}</div>
+            </div>
+            <div className="mt-3 text-center w-full">
+              <div className={`font-bold tabular-nums ${P.bigText} ${fullscreen||cover?"text-7xl sm:text-8xl":"text-5xl"}`}>{mm}:{ss}</div>
+              <div className="mt-3 flex justify-center gap-2 flex-wrap">
+                {!running ? <button onClick={start} className={`px-3 py-1.5 rounded-lg text-white ${P.btnPrimaryBg} ${P.btnPrimaryHover}`}>Start</button> : <button onClick={pause} className={`px-3 py-1.5 rounded-lg text-white ${P.btnPrimaryBg} ${P.btnPrimaryHover}`}>Pause</button>}
+                <button onClick={reset} className={`px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 ${P.btnOutlineBorder}`}>Reset</button>
+                <button onClick={toggleFullscreen} className={`px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 ${P.btnOutlineBorder}`}>{fullscreen?"Exit Fullscreen":"Fullscreen ⛶"}</button>
+                <button onClick={()=>setCover(v=>!v)} className={`px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 ${P.btnOutlineBorder}`}>{cover?"Exit Cover":"Cover Window ▣"}</button>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm w-full max-w-md">
+              <label className="flex items-center justify-between gap-2"><span className={P.chipText}>Focus (min)</span><input type="number" min="1" max="90" value={focusMin} onChange={(e)=> setFocusMin(Math.max(1,Math.min(90,Number(e.target.value)||25)))} className={`w-20 rounded-lg border bg-white px-2 py-1 text-right ${P.btnOutlineBorder}`}/></label>
+              <label className="flex items-center justify-between gap-2"><span className={P.chipText}>Break (min)</span><input type="number" min="1" max="45" value={breakMin} onChange={(e)=> setBreakMin(Math.max(1,Math.min(45,Number(e.target.value)||5)))} className={`w-20 rounded-lg border bg-white px-2 py-1 text-right ${P.btnOutlineBorder}`}/></label>
+            </div>
+          </div>
+        );
+      }
+
+      function App(){
+        const [tasks, setTasks] = useState(loadTasks);
+        const [filter, setFilter] = useState("all");
+        const [query, setQuery] = useState("");
+        const [theme, setTheme] = useState(loadTheme());
+        const [palette, setPalette] = useState(localStorage.getItem(PALETTE_KEY) || 'orange');
+
+        // Persisted bar visibilities
+        const [showSearch, setShowSearch] = useState(loadBool(SEARCH_KEY, true));
+        const [showAdd, setShowAdd] = useState(loadBool(ADD_KEY, true));
+
+        // Global settings moved here
+        const [autoFs, setAutoFs] = useState(loadBool(POMO_FS_KEY, false));
+        const [autoCover, setAutoCover] = useState(loadBool(POMO_COVER_KEY, false));
+        const [autoComplete, setAutoComplete] = useState(loadBool(AUTO_COMPLETE_KEY, false));
+
+        // Spinner / selection state
+        const [spinHighlightId, setSpinHighlightId] = useState(null);
+        const [selectedId, setSelectedId] = useState(null);
+        const [spinning, setSpinning] = useState(false);
+        const [spinResult, setSpinResult] = useState(null);
+
+        // Pomodoro meta
+        const [pomos, setPomos] = useState(0);
+
+        // Theme side‑effect
+        useEffect(() => { const root = document.documentElement; if (theme === "dark") { root.classList.add("dark"); root.classList.add("bg-gray-900"); } else { root.classList.remove("dark"); root.classList.remove("bg-gray-900"); } saveTheme(theme); }, [theme]);
+
+        // Persist settings
+        useEffect(()=>{ localStorage.setItem(PALETTE_KEY, palette); }, [palette]);
+        useEffect(()=>{ saveBool(SEARCH_KEY, showSearch); }, [showSearch]);
+        useEffect(()=>{ saveBool(ADD_KEY, showAdd); }, [showAdd]);
+        useEffect(()=>{ saveBool(POMO_FS_KEY, autoFs); }, [autoFs]);
+        useEffect(()=>{ saveBool(POMO_COVER_KEY, autoCover); }, [autoCover]);
+        useEffect(()=>{ saveBool(AUTO_COMPLETE_KEY, autoComplete); }, [autoComplete]);
+
+        // Persist tasks
+        useEffect(() => saveTasks(tasks), [tasks]);
+
+        const remaining = useMemo(() => tasks.filter((t) => !t.completed).length, [tasks]);
+        const visible = useMemo(() => { const predicate = FILTERS[filter]; return tasks.filter(predicate).filter((t) => t.title.toLowerCase().includes(query.toLowerCase())).sort((a,b)=> a.completed - b.completed || a.createdAt - b.createdAt); }, [tasks, filter, query]);
+
+        const addTask = (title) => { setTasks((prev) => [ { id: uid(), title, completed: false, createdAt: Date.now() }, ...prev ]); };
+        const toggle = (id) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)));
+        const del = (id) => setTasks((prev) => prev.filter((t) => t.id !== id));
+        const saveTitle = (id, title) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+        const move = (id, delta) => setTasks((prev) => { const idx = prev.findIndex((t) => t.id === id); if (idx < 0) return prev; const next=[...prev]; const newIndex=Math.max(0, Math.min(next.length-1, idx+delta)); if(newIndex===idx) return prev; const [item]=next.splice(idx,1); next.splice(newIndex,0,item); return next; });
+        const moveUp = (id) => move(id, -1);
+        const moveDown = (id) => move(id, +1);
+        const clearCompleted = () => setTasks((prev) => prev.filter((t) => !t.completed));
+        const toggleAll = () => { const anyActive = tasks.some((t) => !t.completed); setTasks((prev) => prev.map((t) => ({ ...t, completed: anyActive }))); };
+
+        const exportJSON = () => { const blob = new Blob([JSON.stringify(tasks, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "todos.json"; a.click(); URL.revokeObjectURL(url); };
+        const importJSON = (file) => { if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const data = JSON.parse(e.target.result); if (Array.isArray(data)) { const sanitized = data.filter((x) => x && typeof x.title === "string").map((x) => ({ id: x.id || uid(), title: String(x.title), completed: !!x.completed, createdAt: Number(x.createdAt) || Date.now(), })); setTasks(sanitized); } else { alert("Invalid JSON format."); } } catch { alert("Failed to parse JSON."); } }; reader.readAsText(file); };
+
+        // Spinner logic
+        const spin = () => { const candidates = visible.filter((t) => !t.completed); if (candidates.length === 0) { alert("No active tasks to choose from."); return; } setSpinning(true); setSelectedId(null); setSpinResult(null); let i=0; const order=candidates.map((t)=>t.id); const interval=setInterval(()=>{ setSpinHighlightId(order[i%order.length]); i++; },100); const duration=1600 + Math.random()*800; setTimeout(()=>{ clearInterval(interval); const winner=candidates[Math.floor(Math.random()*candidates.length)]; setSpinHighlightId(winner.id); setSelectedId(winner.id); setSpinning(false); setSpinResult(winner.title); }, duration); };
+
+        return (
+          <div className="space-y-6">
+            <TopBar
+              remaining={remaining}
+              total={tasks.length}
+              filter={filter}
+              setFilter={setFilter}
+              query={query}
+              setQuery={setQuery}
+              theme={theme}
+              toggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              clearCompleted={clearCompleted}
+              toggleAll={toggleAll}
+              onSpin={spin}
+              spinning={spinning}
+              showSearch={showSearch}
+              setShowSearch={(v) => setShowSearch(typeof v === 'function' ? v(showSearch) : v)}
+              showAdd={showAdd}
+              setShowAdd={(v) => setShowAdd(typeof v === 'function' ? v(showAdd) : v)}
+              palette={palette}
+              setPalette={setPalette}
+              settingsState={{ autoFs, setAutoFs, autoCover, setAutoCover, autoComplete, setAutoComplete }}
+            />
+
+            <PomodoroTimer selectedTitle={tasks.find(t => t.id === selectedId)?.title} onDone={() => { setPomos(p => p + 1); if (autoComplete && selectedId) { toggle(selectedId); } }} paletteKey={palette} autoFs={autoFs} autoCover={autoCover} />
+
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <div>Flows: <strong>{pomos}</strong></div>
+              <div className="flex items-center gap-2">
+                <button onClick={exportJSON} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 text-sm">Export</button>
+                <label className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 text-sm cursor-pointer">Import<input type="file" accept="application/json" className="hidden" onChange={(e) => importJSON(e.target.files?.[0])} /></label>
+              </div>
+            </div>
+
+            {showAdd && <AddForm onAdd={addTask} />}
+
+            {visible.length === 0 ? (
+              <EmptyState />
+            ) : (
+              <>
+                <ul className="space-y-2">
+                  {visible.map((task) => (
+                    <TaskItem key={task.id} task={task} onToggle={toggle} onDelete={del} onSaveTitle={saveTitle} onMoveUp={moveUp} onMoveDown={moveDown} highlighted={task.id === spinHighlightId} selected={task.id === selectedId} />
+                  ))}
+                </ul>
+
+                {spinResult && (
+                  <div className="rounded-xl border border-blue-300 bg-blue-50 p-4 text-center text-blue-700">
+                    🎉 Selected Task: <strong>{spinResult}</strong>
+                    <div className="mt-2 flex justify-center gap-2">
+                      <button onClick={() => setSpinResult(null)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-xs hover:bg-blue-100">Dismiss</button>
+                      <button onClick={() => { setSpinResult(null); spin(); }} className="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100">Spin Again</button>
+                      {selectedId && (<button onClick={() => { const id = selectedId; setSelectedId(null); setSpinResult(null); toggle(id); }} className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs hover:bg-gray-100">Mark Done</button>)}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            <footer className="pt-4 text-center text-xs text-gray-400">Built by Robert Tzou. Data is stored locally in your browser.</footer>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App/>);
+    </script>
+  </body>
+</html>
